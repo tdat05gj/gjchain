@@ -93,7 +93,8 @@ class GJChain {
         const walletDoc = await walletsCollection.doc(fromAddress).get();
         const walletData = walletDoc.data();
         if (!walletData || walletData.balance < amount) throw new Error('Không đủ số dư');
-        this.pendingTransactions.push({ from: fromAddress, to: toAddress, amount });
+        this.pendingTransactions.push({ from: fromAddress, to: toAddress, amount, timestamp: new Date().toISOString() });
+        await blockchainCollection.doc('pending').set({ transactions: this.pendingTransactions }, { merge: true });
     }
 
     async minePendingTransactions(minerAddress) {
@@ -111,6 +112,7 @@ class GJChain {
         this.chain.push(block);
         await blockchainCollection.doc(block.index.toString()).set({ ...block });
         this.pendingTransactions = [];
+        await blockchainCollection.doc('pending').set({ transactions: [] });
         this.broadcastBlock(block);
         return block;
     }
@@ -176,5 +178,9 @@ app.post('/mine', async (req, res) => {
     res.json(block);
 });
 app.get('/chain', async (req, res) => res.json(await gjCoin.loadChain()));
+app.get('/pending', async (req, res) => {
+    const pendingSnapshot = await blockchainCollection.doc('pending').get();
+    res.json(pendingSnapshot.exists ? pendingSnapshot.data().transactions : []);
+});
 
 app.listen(port, () => console.log(`GJChain chạy tại http://localhost:${port}`));
