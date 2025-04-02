@@ -1,0 +1,1 @@
+document.getElementById('output').textContent = 'Chào mừng đến với GJChain!';

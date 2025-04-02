@@ -1,0 +1,14 @@
+{
+  "name": "gjchain",
+  "version": "1.0.0",
+  "main": "gjchain.js",
+  "scripts": {
+    "start": "node gjchain.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "ws": "^8.13.0",
+    "firebase-admin": "^11.5.0",
+    "crypto": "latest"
+  }
+}
