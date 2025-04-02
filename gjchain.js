@@ -5,7 +5,6 @@ const admin = require('firebase-admin');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Khởi tạo Firebase với biến môi trường
 let serviceAccount;
 if (process.env.FIREBASE_ADMINSDK) {
     try {
@@ -117,10 +116,8 @@ class GJChain {
     }
 
     setupP2P() {
-        const wsPort = parseInt(port, 10) + 1; // Chuyển port thành số nguyên và cộng 1
-        if (wsPort > 65535) {
-            throw new Error('WebSocket port exceeds maximum value (65535)');
-        }
+        const wsPort = parseInt(port, 10) + 1;
+        if (wsPort > 65535) throw new Error('WebSocket port exceeds maximum value (65535)');
         const server = new WebSocket.Server({ port: wsPort });
         server.on('connection', ws => this.connectPeer(ws));
         this.connectToPeers(['ws://localhost:3001']);
