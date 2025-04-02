@@ -2,15 +2,49 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GJChain</title>
-    <link rel="stylesheet" href="/styles.css">
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            background: linear-gradient(135deg, #1e3c72, #2a5298);
+            color: #fff;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
+        h1 {
+            text-align: center;
+            color: #ffd700;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 10px;
+            background: #ffd700;
+            color: #333;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        button:hover {
+            background: #ffcc00;
+        }
+    </style>
 </head>
 <body>
-    <h1>GJChain</h1>
-    <button onclick="window.location.href='https://gjchain-explorer.onrender.com'">Explorer</button>
-    <button onclick="window.location.href='https://gjchain-wallet.onrender.com'">Wallet</button>
-    <button onclick="window.location.href='https://gjchain-node.onrender.com'">Mining Node</button>
-    <pre id="output"></pre>
-    <script src="/script.js"></script>
+    <div class="container">
+        <h1>GJChain</h1>
+        <button onclick="window.location.href='https://gjchain-explorer.onrender.com'">Explorer</button>
+        <button onclick="window.location.href='https://gjchain-wallet.onrender.com'">Wallet</button>
+        <button onclick="window.location.href='https://gjchain-node.onrender.com'">Mining Node</button>
+    </div>
 </body>
 </html>
