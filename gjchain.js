@@ -5,7 +5,21 @@ const admin = require('firebase-admin');
 const app = express();
 const port = process.env.PORT || 3000;
 
-const serviceAccount = require('./firebase-adminsdk.json');
+// Khởi tạo Firebase với biến môi trường
+let serviceAccount;
+if (process.env.FIREBASE_ADMINSDK) {
+    try {
+        serviceAccount = JSON.parse(process.env.FIREBASE_ADMINSDK);
+    } catch (error) {
+        console.error('Error parsing FIREBASE_ADMINSDK:', error);
+        throw new Error('Invalid FIREBASE_ADMINSDK environment variable');
+    }
+} else {
+    // Fallback cho chạy cục bộ
+    console.log('FIREBASE_ADMINSDK not found, falling back to local file');
+    serviceAccount = require('./firebase-adminsdk.json');
+}
+
 admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 const db = admin.firestore();
 const blockchainCollection = db.collection('gjchain');
