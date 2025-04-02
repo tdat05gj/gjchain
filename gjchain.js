@@ -15,7 +15,6 @@ if (process.env.FIREBASE_ADMINSDK) {
         throw new Error('Invalid FIREBASE_ADMINSDK environment variable');
     }
 } else {
-    // Fallback cho chạy cục bộ
     console.log('FIREBASE_ADMINSDK not found, falling back to local file');
     serviceAccount = require('./firebase-adminsdk.json');
 }
@@ -118,7 +117,11 @@ class GJChain {
     }
 
     setupP2P() {
-        const server = new WebSocket.Server({ port: port + 1 });
+        const wsPort = parseInt(port, 10) + 1; // Chuyển port thành số nguyên và cộng 1
+        if (wsPort > 65535) {
+            throw new Error('WebSocket port exceeds maximum value (65535)');
+        }
+        const server = new WebSocket.Server({ port: wsPort });
         server.on('connection', ws => this.connectPeer(ws));
         this.connectToPeers(['ws://localhost:3001']);
     }
