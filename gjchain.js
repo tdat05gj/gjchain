@@ -1,186 +1,223 @@
 const express = require('express');
 const WebSocket = require('ws');
 const crypto = require('crypto');
-const admin = require('firebase-admin');
+const fs = require('fs').promises;
+const path = require('path');
 const app = express();
 const port = process.env.PORT || 3000;
-
-let serviceAccount;
-if (process.env.FIREBASE_ADMINSDK) {
-    try {
-        serviceAccount = JSON.parse(process.env.FIREBASE_ADMINSDK);
-    } catch (error) {
-        console.error('Error parsing FIREBASE_ADMINSDK:', error);
-        throw new Error('Invalid FIREBASE_ADMINSDK environment variable');
-    }
-} else {
-    console.log('FIREBASE_ADMINSDK not found, falling back to local file');
-    serviceAccount = require('./firebase-adminsdk.json');
-}
-
-admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
-const db = admin.firestore();
-const blockchainCollection = db.collection('gjchain');
-const walletsCollection = db.collection('wallets');
 
 app.use(express.json());
 app.use(express.static('public'));
 
 class Block {
-    constructor(index, timestamp, data, previousHash = '', miner) {
+    constructor(index, timestamp, data, previousHash, miner, difficulty) {
         this.index = index;
         this.timestamp = timestamp;
         this.data = data;
         this.previousHash = previousHash;
         this.miner = miner;
+        this.difficulty = difficulty;
         this.nonce = 0;
         this.hash = this.calculateHash();
     }
 
     calculateHash() {
         return crypto.createHash('sha256').update(
-            this.index + this.timestamp + JSON.stringify(this.data) + this.previousHash + this.miner + this.nonce
+            this.index + this.timestamp + JSON.stringify(this.data) + 
+            this.previousHash + this.miner + this.nonce + this.difficulty
         ).digest('hex');
     }
 
-    mineBlock(difficulty) {
-        const target = '0'.repeat(difficulty);
-        while (this.hash.substring(0, difficulty) !== target) {
+    async mineBlock() {
+        const target = '0'.repeat(this.difficulty);
+        while (this.hash.substring(0, this.difficulty) !== target) {
             this.nonce++;
             this.hash = this.calculateHash();
         }
+        return this;
     }
 }
 
 class GJChain {
     constructor() {
-        this.difficulty = 4;
-        this.wallets = new Map();
         this.chain = [];
         this.pendingTransactions = [];
-        this.peers = [];
+        this.peers = new Set();
+        this.difficulty = 4;
         this.miningReward = 10;
+        this.nodeId = crypto.randomBytes(16).toString('hex');
     }
 
-    async init() {
-        this.chain = await this.loadChain();
+    async initialize() {
+        await this.loadChainFromDisk();
+        if (this.chain.length === 0) {
+            const genesisBlock = new Block(0, new Date().toISOString(), [], '0', 'genesis', this.difficulty);
+            await genesisBlock.mineBlock();
+            this.chain.push(genesisBlock);
+            await this.saveChainToDisk();
+        }
         this.setupP2P();
     }
 
-    createWallet() {
-        const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
-            modulusLength: 2048,
-            publicKeyEncoding: { type: 'spki', format: 'pem' },
-            privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
-        });
-        const walletAddress = `gj${crypto.createHash('sha256').update(publicKey).digest('hex').slice(0, 16)}`;
-        this.wallets.set(walletAddress, { publicKey, privateKey, balance: 0 });
-        walletsCollection.doc(walletAddress).set({ balance: 0, publicKey, privateKey });
-        return { address: walletAddress, publicKey, privateKey };
-    }
-
-    async loadChain() {
-        const snapshot = await blockchainCollection.orderBy('index').get();
-        if (snapshot.empty) {
-            const genesisBlock = new Block(0, '01/04/2025', [], '0', 'gjGenesis');
-            await blockchainCollection.doc('0').set({ ...genesisBlock });
-            return [genesisBlock];
+    async loadChainFromDisk() {
+        try {
+            const data = await fs.readFile('blockchain.json', 'utf8');
+            this.chain = JSON.parse(data).map(b => Object.assign(new Block(), b));
+        } catch (error) {
+            this.chain = [];
         }
-        return snapshot.docs.map(doc => Object.assign(new Block(), doc.data()));
     }
 
-    async addTransaction(fromAddress, toAddress, amount) {
-        const walletDoc = await walletsCollection.doc(fromAddress).get();
-        const walletData = walletDoc.data();
-        if (!walletData || walletData.balance < amount) throw new Error('Không đủ số dư');
-        this.pendingTransactions.push({ from: fromAddress, to: toAddress, amount, timestamp: new Date().toISOString() });
-        await blockchainCollection.doc('pending').set({ transactions: this.pendingTransactions }, { merge: true });
+    async saveChainToDisk() {
+        await fs.writeFile('blockchain.json', JSON.stringify(this.chain, null, 2));
+ $\$$
+
+    createTransaction(from, to, amount) {
+        const tx = {
+            from,
+            to,
+            amount,
+            timestamp: new Date().toISOString(),
+            id: crypto.randomBytes(32).toString('hex')
+        };
+        this.pendingTransactions.push(tx);
+        this.broadcast({ type: 'transaction', data: tx });
+        return tx;
     }
 
-    async minePendingTransactions(minerAddress) {
-        const chain = await this.loadChain();
-        const latestBlock = chain[chain.length - 1];
-        const block = new Block(chain.length, new Date().toISOString(), this.pendingTransactions, latestBlock.hash, minerAddress);
-        block.mineBlock(this.difficulty);
+    async mineBlock(minerAddress) {
+        const lastBlock = this.chain[this.chain.length - 1];
+        const block = new Block(
+            this.chain.length,
+            new Date().toISOString(),
+            [...this.pendingTransactions],
+            lastBlock.hash,
+            minerAddress,
+            this.adjustDifficulty(lastBlock)
+        );
 
-        for (const tx of this.pendingTransactions) {
-            await walletsCollection.doc(tx.from).update({ balance: admin.firestore.FieldValue.increment(-tx.amount) });
-            await walletsCollection.doc(tx.to).update({ balance: admin.firestore.FieldValue.increment(tx.amount) }, { merge: true });
-        }
-        await walletsCollection.doc(minerAddress).update({ balance: admin.firestore.FieldValue.increment(this.miningReward) }, { merge: true });
-
+        console.log(`Đang đào block ${block.index}...`);
+        await block.mineBlock();
         this.chain.push(block);
-        await blockchainCollection.doc(block.index.toString()).set({ ...block });
         this.pendingTransactions = [];
-        await blockchainCollection.doc('pending').set({ transactions: [] });
-        this.broadcastBlock(block);
+        await this.saveChainToDisk();
+        this.broadcast({ type: 'block', data: block });
         return block;
     }
 
-    setupP2P() {
-        const wsPort = parseInt(port, 10) + 1;
-        if (wsPort > 65535) throw new Error('WebSocket port exceeds maximum value (65535)');
-        const server = new WebSocket.Server({ port: wsPort });
-        server.on('connection', ws => this.connectPeer(ws));
-        this.connectToPeers(['ws://localhost:3001']);
+    adjustDifficulty(lastBlock) {
+        const timeExpected = 60000; // 1 phút
+        const timeTaken = new Date() - new Date(lastBlock.timestamp);
+        return timeTaken < timeExpected / 2 ? this.difficulty + 1 :
+               timeTaken > timeExpected * 2 ? this.difficulty - 1 :
+               this.difficulty;
     }
 
-    connectPeer(ws) {
-        this.peers.push(ws);
-        ws.on('message', message => this.handleMessage(JSON.parse(message)));
+    setupP2P() {
+        const wss = new WebSocket.Server({ port: port + 1 });
+        wss.on('connection', ws => this.handlePeerConnection(ws));
+        console.log(`WebSocket chạy tại ws://localhost:${port + 1}`);
+    }
+
+    handlePeerConnection(ws) {
+        this.peers.add(ws);
+        ws.on('message', message => this.handleMessage(message));
+        ws.on('close', () => this.peers.delete(ws));
         ws.send(JSON.stringify({ type: 'chain', data: this.chain }));
     }
 
-    connectToPeers(peerUrls) {
-        peerUrls.forEach(url => {
-            const ws = new WebSocket(url);
-            ws.on('open', () => this.connectPeer(ws));
-            ws.on('error', () => console.log(`Không kết nối được ${url}`));
+    connectToPeer(peerUrl) {
+        const ws = new WebSocket(peerUrl);
+        ws.on('open', () => this.handlePeerConnection(ws));
+        ws.on('error', () => console.log(`Không kết nối được với ${peerUrl}`));
+    }
+
+    broadcast(message) {
+        this.peers.forEach(peer => {
+            if (peer.readyState === WebSocket.OPEN) {
+                peer.send(JSON.stringify(message));
+            }
         });
     }
 
-    broadcastBlock(block) {
-        this.peers.forEach(peer => peer.send(JSON.stringify({ type: 'block', data: block })));
+    async handleMessage(message) {
+        const data = JSON.parse(message);
+        switch (data.type) {
+            case 'transaction':
+                if (!this.pendingTransactions.some(tx => tx.id === data.data.id)) {
+                    this.pendingTransactions.push(data.data);
+                }
+                break;
+            case 'block':
+                await this.validateAndAddBlock(data.data);
+                break;
+            case 'chain':
+                await this.resolveConflicts(data.data);
+                break;
+        }
     }
 
-    async handleMessage(message) {
-        if (message.type === 'block') {
-            const chain = await this.loadChain();
-            const newBlock = Object.assign(new Block(), message.data);
-            if (newBlock.previousHash === chain[chain.length - 1].hash && newBlock.hash === newBlock.calculateHash()) {
-                this.chain.push(newBlock);
-                await blockchainCollection.doc(newBlock.index.toString()).set({ ...newBlock });
+    async validateAndAddBlock(blockData) {
+        const block = Object.assign(new Block(), blockData);
+        const lastBlock = this.chain[this.chain.length - 1];
+        
+        if (block.previousHash === lastBlock.hash &&
+            block.hash === block.calculateHash() &&
+            block.hash.startsWith('0'.repeat(block.difficulty))) {
+            this.chain.push(block);
+            this.pendingTransactions = this.pendingTransactions.filter(
+                tx => !block.data.some(btx => btx.id === tx.id)
+            );
+            await this.saveChainToDisk();
+            return true;
+        }
+        return false;
+    }
+
+    async resolveConflicts(remoteChain) {
+        if (remoteChain.length > this.chain.length) {
+            if (this.isValidChain(remoteChain)) {
+                this.chain = remoteChain;
+                await this.saveChainToDisk();
+                return true;
             }
         }
+        return false;
+    }
+
+    isValidChain(chain) {
+        for (let i = 1; i < chain.length; i++) {
+            const current = chain[i];
+            const prev = chain[i - 1];
+            if (current.hash !== current.calculateHash() ||
+                current.previousHash !== prev.hash ||
+                !current.hash.startsWith('0'.repeat(current.difficulty))) {
+                return false;
+            }
+        }
+        return true;
     }
 }
 
 const gjCoin = new GJChain();
-gjCoin.init();
+gjCoin.initialize();
 
-app.post('/wallet', (req, res) => res.json(gjCoin.createWallet()));
-app.get('/wallets', async (req, res) => {
-    const snapshot = await walletsCollection.get();
-    res.json(snapshot.docs.map(doc => ({ address: doc.id, balance: doc.data().balance })));
+app.post('/transaction', (req, res) => {
+    const { from, to, amount } = req.body;
+    const tx = gjCoin.createTransaction(from, to, amount);
+    res.json({ message: 'Giao dịch đã được thêm', tx });
 });
-app.post('/transaction', async (req, res) => {
-    const { fromAddress, toAddress, amount } = req.body;
-    try {
-        await gjCoin.addTransaction(fromAddress, toAddress, amount);
-        res.json({ message: 'Giao dịch chờ đào' });
-    } catch (error) {
-        res.status(400).json({ error: error.message });
-    }
-});
+
 app.post('/mine', async (req, res) => {
     const { minerAddress } = req.body;
-    const block = await gjCoin.minePendingTransactions(minerAddress);
-    res.json(block);
+    const block = await gjCoin.mineBlock(minerAddress);
+    res.json({ message: 'Đã đào xong block', block });
 });
-app.get('/chain', async (req, res) => res.json(await gjCoin.loadChain()));
-app.get('/pending', async (req, res) => {
-    const pendingSnapshot = await blockchainCollection.doc('pending').get();
-    res.json(pendingSnapshot.exists ? pendingSnapshot.data().transactions : []);
+
+app.get('/chain', (req, res) => res.json(gjCoin.chain));
+app.post('/peers', (req, res) => {
+    gjCoin.connectToPeer(req.body.peer);
+    res.json({ message: `Đang kết nối tới ${req.body.peer}` });
 });
 
 app.listen(port, () => console.log(`GJChain chạy tại http://localhost:${port}`));
